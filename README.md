@@ -32,9 +32,10 @@ AILONG 内容收集器是一款 Chrome 扩展程序，旨在帮助您快速、�
 4.  **数据处理**：整合所有收集的数据，进行错误处理和重试，然后调用飞书 API 进行处理。
 5.  **结果反馈**：向用户展示处理状态，并提供操作结果通知。
 
-架构图可参考：`architecture.md`
+ 
 
 ## 如何使用
+详细使用说明：https://l6uugl8evm.feishu.cn/docx/AXoGd8Baqo26S0xnII0cVk1onVh?from=from_copylink
 
 1.  在 Chrome 网上应用店中安装 AILONG 内容收集器。
 2.  点击浏览器工具栏中的扩展图标，打开扩展程序的弹窗。
@@ -73,7 +74,3 @@ AILONG 内容收集器需要以下权限才能正常工作：
 ## 感谢
 
 感谢您使用 AILONG 内容收集器！我们希望它能帮助您更高效地管理和利用信息。
-
----
-
-**注意**：请将上述信息中的 `[your_email@example.com]` 和 `[your_github_repo]` 替换为您自己的邮箱地址和 GitHub 仓库地址。

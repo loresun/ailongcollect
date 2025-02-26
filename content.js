@@ -607,15 +607,33 @@ async function extractContent() {
     console.log('开始提取页面内容');
     
     try {
-        // 使用通用提取方法处理所有页面
-        const result = await extractGeneralContent();
+        const hostname = window.location.hostname;
         
-        // 确保返回的数据中包含 idea 字段，即使为空
+        // 检测 DeepSeek 聊天页面
+        if (hostname === 'chat.deepseek.com' || hostname.includes('deepseek.com')) {
+            console.log('检测到DeepSeek页面，直接调用专用提取方法');
+            return await extractDeepSeekContent();
+        }
+        
+        // 直接检测特定网站，确保能正确处理
+        if (hostname === 'web.okjike.com') {
+            console.log('检测到即刻网站，直接调用专用提取方法');
+            return await extractJikeContent();
+        }
+        
+        // 检测知识星球网站
+        if (hostname.includes('zsxq.com')) {
+            console.log('检测到知识星球网站，直接调用专用提取方法');
+            return await extractZsxqContent();
+        }
+        
+        const result = await ExtractorManager.extract(hostname);
+        
+        // 确保返回的数据中包含必要字段
         if (!result.idea) {
             result.idea = '';
         }
         
-        // 确保 metadata 中也包含 idea
         if (!result.metadata) {
             result.metadata = {};
         }
@@ -872,7 +890,42 @@ async function extractJikeContent() {
         // 获取正文内容
         const contentDiv = document.querySelector('.break-words.content_truncate__tFX8J') ||
                          document.querySelector('.post-content');
-        const content = contentDiv?.textContent?.trim() || '';
+        
+        // 处理内容，包括提取超链接
+        let content = '';
+        let processedContent = '';
+        
+        if (contentDiv) {
+            // 先获取原始文本内容
+            content = contentDiv.textContent.trim();
+            
+            // 创建一个副本用于处理
+            const contentClone = contentDiv.cloneNode(true);
+            
+            // 处理所有超链接，将链接URL添加到文本中
+            const links = contentClone.querySelectorAll('a');
+            links.forEach(link => {
+                // 检查是否是外部链接
+                if (link.href && 
+                    link.href.startsWith('http') && 
+                    !link.href.includes('okjike.com') &&
+                    link.getAttribute('target') === '_blank') {
+                    
+                    // 创建一个新的文本节点，包含链接URL
+                    const linkText = document.createTextNode(` [${link.href}] `);
+                    
+                    // 在链接元素后插入链接URL
+                    if (link.nextSibling) {
+                        link.parentNode.insertBefore(linkText, link.nextSibling);
+                    } else {
+                        link.parentNode.appendChild(linkText);
+                    }
+                }
+            });
+            
+            // 获取处理后的文本内容
+            processedContent = contentClone.textContent.trim();
+        }
 
         // 获取话题标签
         const topics = Array.from(document.querySelectorAll('a[href^="/topic/"]'))
@@ -897,20 +950,35 @@ async function extractJikeContent() {
                 });
             }
         });
+        
+        // 获取所有外部链接
+        const externalLinks = [];
+        const linkElements = contentDiv?.querySelectorAll('a[target="_blank"]') || [];
+        linkElements.forEach(link => {
+            if (link.href && 
+                link.href.startsWith('http') && 
+                !link.href.includes('okjike.com')) {
+                externalLinks.push({
+                    text: link.textContent.trim(),
+                    url: link.href
+                });
+            }
+        });
 
         // 构造返回数据
         const extractedData = {
             title: content?.split('\n')[0] || '无标题', // 使用第一行作为标题
             url: window.location.href,
-            content: cleanContent(content),
+            content: cleanContent(processedContent || content), // 使用处理后的内容
             metadata: {
                 author: cleanContent(author),
                 publishTime: cleanContent(publishTime),
-                platform: '即',
+                platform: '即刻',
                 topics: topics,
                 source: 'web.okjike.com',
                 paragraphCount: content.split('\n\n').length,
                 images: images,
+                externalLinks: externalLinks, // 添加外部链接数据
                 interactions: {
                     likes: likes,
                     comments: comments,
@@ -1796,4 +1864,531 @@ if (window.location.hostname.includes('xiaohongshu.com')) {
             setTimeout(addCollectButton, 1000); // 等待新页面内容加载
         }
     }).observe(document.body, { subtree: true, childList: true });
+}
+
+// 添加提取器管理器
+const ExtractorManager = {
+    extractors: {
+        'mp.weixin.qq.com': {
+            name: '微信公众号',
+            extract: extractWechatContent
+        },
+        'web.okjike.com': {
+            name: '即刻',
+            extract: extractJikeContent
+        },
+        'deepseek.com': {
+            name: 'DeepSeek',
+            extract: extractDeepSeekContent
+        },
+        'chat.deepseek.com': {
+            name: 'DeepSeek Chat',
+            extract: extractDeepSeekContent
+        },
+        'weibo.com': {
+            name: '微博',
+            extract: extractWeiboContent
+        },
+        'zsxq.com': {
+            name: '知识星球',
+            extract: extractZsxqContent
+        }
+    },
+
+    getExtractor(hostname) {
+        return this.extractors[hostname];
+    },
+
+    async extract(hostname) {
+        const extractor = this.getExtractor(hostname);
+        if (extractor) {
+            console.log(`使用 ${extractor.name} 专用提取方法`);
+            return await extractor.extract();
+        }
+        console.log('使用通用提取方法');
+        return await extractGeneralContent();
+    }
+};
+
+// 添加DeepSeek内容提取函数
+async function extractDeepSeekContent() {
+    try {
+        console.log('检测到DeepSeek页面，使用专用提取方法');
+        
+        // 获取标题 - 使用提供的选择器
+        const titleElement = document.querySelector('div.d8ed659a[tabindex="0"]');
+        const title = titleElement?.textContent?.trim() || document.title;
+        
+        console.log('提取到DeepSeek标题:', title);
+
+        // 获取对话内容
+        let content = '';
+        
+        // 获取所有用户提问和AI回答(div.f9bf7997)，忽略无需采集的内容(div.cbcaa82c)
+        const messages = document.querySelectorAll('div.f9bf7997, div.fbb737a4');
+        const messageContents = Array.from(messages).map(msg => {
+            const textContent = msg.textContent.trim();
+            // 这里不再添加"DeepSeek:"前缀，保留原始内容
+            return textContent || '';
+        }).filter(Boolean);
+        
+        // 如果有消息内容，直接使用
+        if (messageContents.length > 0) {
+            content = messageContents.join('\n\n');
+        } else {
+            // 如果没有找到消息内容，尝试使用其他选择器
+            // 尝试获取整个聊天容器，但排除 div.cbcaa82c 元素
+            const chatContainer = document.querySelector('div.a5cd95be') || 
+                                 document.querySelector('div.be88ba8a');
+            
+            if (chatContainer) {
+                // 创建一个副本用于处理
+                const containerClone = chatContainer.cloneNode(true);
+                
+                // 移除所有 div.cbcaa82c 元素（无需采集的内容）
+                const excludeDivs = containerClone.querySelectorAll('div.cbcaa82c');
+                excludeDivs.forEach(div => div.remove());
+                
+                // 获取所有段落
+                const paragraphs = Array.from(containerClone.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, pre, code'))
+                    .map(p => p.textContent.trim())
+                    .filter(text => text.length > 0);
+                
+                content = paragraphs.join('\n\n');
+            }
+        }
+        
+        // 如果仍然没有内容，尝试获取页面上的所有文本，但排除 div.cbcaa82c 元素
+        if (!content) {
+            // 创建一个副本用于处理
+            const bodyClone = document.body.cloneNode(true);
+            
+            // 移除所有 div.cbcaa82c 元素（无需采集的内容）
+            const excludeDivs = bodyClone.querySelectorAll('div.cbcaa82c');
+            excludeDivs.forEach(div => div.remove());
+            
+            const bodyText = bodyClone.textContent.trim();
+            if (bodyText) {
+                // 清理文本，移除过多的空白
+                content = bodyText.replace(/\s+/g, ' ').trim();
+            }
+        }
+
+        console.log('提取到DeepSeek内容长度:', content.length);
+
+        return {
+            title,
+            url: window.location.href,
+            content,
+            metadata: {
+                author: 'DeepSeek AI', // DeepSeek 的作者信息
+                platform: 'DeepSeek',
+                publishTime: new Date().toISOString(), // 使用当前时间
+                tags: ['AI', '聊天', 'DeepSeek'], // 添加默认标签
+                images: [], // DeepSeek 聊天页面通常没有图片
+                paragraphCount: content.split('\n\n').length,
+                timestamp: new Date().toISOString(),
+                chatType: 'deepseek'
+            }
+        };
+
+    } catch (error) {
+        console.error('提取DeepSeek内容时出错:', error);
+        throw new Error('提取DeepSeek内容失败: ' + error.message);
+    }
+}
+
+// 添加微博内容提取函数
+async function extractWeiboContent() {
+    try {
+        console.log('检测到微博页面，使用专用提取方法');
+
+        // 获取作者信息
+        const author = document.querySelector('.username')?.textContent?.trim() || 
+                      document.querySelector('.woo-font--extraLight')?.textContent?.trim() ||
+                      '未知作者';
+
+        // 获取发布时间
+        const publishTime = document.querySelector('.time')?.textContent?.trim() || 
+                          document.querySelector('.woo-box-flex .woo-box-alignCenter')?.textContent?.trim() ||
+                          '';
+
+        // 获取微博正文
+        const contentElement = document.querySelector('.detail_wbtext_4CRf9') || 
+                             document.querySelector('.content');
+        
+        // 处理内容，包括提取超链接
+        let content = '';
+        let processedContent = '';
+        
+        if (contentElement) {
+            // 获取原始文本内容
+            content = contentElement.textContent.trim();
+            
+            // 创建一个副本用于处理
+            const contentClone = contentElement.cloneNode(true);
+            
+            // 处理所有超链接，将链接URL添加到文本中
+            const links = contentClone.querySelectorAll('a');
+            links.forEach(link => {
+                // 检查是否是有效链接
+                if (link.href && link.href.startsWith('http')) {
+                    // 如果链接文本不包含完整URL，则添加URL
+                    if (!link.textContent.includes(link.href)) {
+                        // 创建一个新的文本节点，包含链接URL
+                        const linkText = document.createTextNode(` [${link.href}] `);
+                        
+                        // 在链接元素后插入链接URL
+                        if (link.nextSibling) {
+                            link.parentNode.insertBefore(linkText, link.nextSibling);
+                        } else {
+                            link.parentNode.appendChild(linkText);
+                        }
+                    }
+                }
+            });
+            
+            // 获取处理后的文本内容
+            processedContent = contentClone.textContent.trim();
+        }
+
+        // 检查是否有转发内容
+        const retweetElement = document.querySelector('.retweet.Feed_retweet_JqZJb') || 
+                              document.querySelector('.Feed_retweet_JqZJb') ||
+                              document.querySelector('[class*="retweet"]');
+        
+        let retweetData = null;
+        
+        if (retweetElement) {
+            console.log('检测到转发内容，提取转发信息');
+            
+            // 获取转发作者
+            const retweetAuthor = retweetElement.querySelector('.detail_nick_u-ffy')?.textContent?.trim() ||
+                                 retweetElement.querySelector('a[usercard]')?.textContent?.trim() ||
+                                 '未知作者';
+            
+            // 获取转发内容
+            const retweetContentElement = retweetElement.querySelector('.detail_wbtext_4CRf9') || 
+                                         retweetElement.querySelector('[class*="detail_reText"]');
+            
+            let retweetContent = '';
+            let processedRetweetContent = '';
+            
+            if (retweetContentElement) {
+                // 获取原始文本内容
+                retweetContent = retweetContentElement.textContent.trim();
+                
+                // 创建一个副本用于处理
+                const retweetContentClone = retweetContentElement.cloneNode(true);
+                
+                // 处理所有超链接，将链接URL添加到文本中
+                const retweetLinks = retweetContentClone.querySelectorAll('a');
+                retweetLinks.forEach(link => {
+                    // 检查是否是有效链接
+                    if (link.href && link.href.startsWith('http')) {
+                        // 排除@用户链接
+                        if (!link.href.includes('/u/') && !link.href.includes('/n/')) {
+                            // 如果链接文本不包含完整URL，则添加URL
+                            if (!link.textContent.includes(link.href)) {
+                                // 创建一个新的文本节点，包含链接URL
+                                const linkText = document.createTextNode(` [${link.href}] `);
+                                
+                                // 在链接元素后插入链接URL
+                                if (link.nextSibling) {
+                                    link.parentNode.insertBefore(linkText, link.nextSibling);
+                                } else {
+                                    link.parentNode.appendChild(linkText);
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                // 获取处理后的文本内容
+                processedRetweetContent = retweetContentClone.textContent.trim();
+            }
+            
+            // 获取转发时间
+            const retweetTime = retweetElement.querySelector('.head-info_time_6sFQg')?.textContent?.trim() || '';
+            
+            // 获取转发微博的URL
+            const retweetUrl = retweetElement.querySelector('.head-info_time_6sFQg')?.href || '';
+            
+            // 获取转发微博的互动数据
+            const retweetLikes = retweetElement.querySelector('.woo-like-count')?.textContent?.trim() || '0';
+            const retweetComments = retweetElement.querySelector('[title="评论"] + .toolbar_num_JXZul')?.textContent?.trim() || '0';
+            const retweetReposts = retweetElement.querySelector('[title="转发"] + .toolbar_num_JXZul')?.textContent?.trim() || '0';
+            
+            // 获取转发微博的图片
+            const retweetImages = Array.from(retweetElement.querySelectorAll('.woo-picture-img'))
+                .map(img => ({
+                    url: img.src,
+                    alt: img.alt || ''
+                }))
+                .filter(img => img.url && !img.url.includes('data:image'));
+            
+            // 构造转发数据
+            retweetData = {
+                author: retweetAuthor,
+                content: cleanContent(processedRetweetContent || retweetContent),
+                url: retweetUrl,
+                publishTime: retweetTime,
+                images: retweetImages,
+                interactions: {
+                    likes: retweetLikes,
+                    comments: retweetComments,
+                    reposts: retweetReposts
+                }
+            };
+            
+            // 如果原微博没有内容，但有转发内容，则使用转发内容作为主要内容
+            if (!content && retweetContent) {
+                content = `转发 @${retweetAuthor}：${retweetContent}`;
+                processedContent = `转发 @${retweetAuthor}：${processedRetweetContent}`;
+            }
+        }
+
+        // 获取互动数据
+        const likes = document.querySelector('[data-testid="like"] .woo-like-count')?.textContent || '0';
+        const reposts = document.querySelector('[data-testid="forward"] .woo-like-count')?.textContent || '0';
+        const comments = document.querySelector('[data-testid="comment"] .woo-like-count')?.textContent || '0';
+
+        // 获取图片
+        const images = Array.from(document.querySelectorAll('.woo-picture-img, .media-piclist img'))
+            .map(img => ({
+                url: img.src,
+                alt: img.alt || ''
+            }))
+            .filter(img => img.url && !img.url.includes('data:image'));
+
+        // 获取话题标签
+        const topics = Array.from(document.querySelectorAll('.topic-link, .woo-box-item-flex a[href*="topic"]'))
+            .map(topic => topic.textContent.trim())
+            .filter(Boolean);
+            
+        // 获取所有外部链接
+        const externalLinks = [];
+        
+        // 从正文中提取链接
+        if (contentElement) {
+            const linkElements = contentElement.querySelectorAll('a');
+            linkElements.forEach(link => {
+                if (link.href && link.href.startsWith('http')) {
+                    // 排除话题链接和@用户链接
+                    if (!link.href.includes('/topic/') && !link.href.includes('/n/')) {
+                        externalLinks.push({
+                            text: link.textContent.trim(),
+                            url: link.href
+                        });
+                    }
+                }
+            });
+        }
+        
+        // 特别处理视频链接
+        const videoLinks = document.querySelectorAll('a[href*="video.weibo.com/show"]');
+        videoLinks.forEach(link => {
+            if (link.href && !externalLinks.some(item => item.url === link.href)) {
+                externalLinks.push({
+                    text: link.textContent.trim() || '微博视频',
+                    url: link.href,
+                    type: 'video'
+                });
+            }
+        });
+
+        // 构造返回数据
+        const result = {
+            title: content.split('\n')[0] || '微博内容', // 使用第一行作为标题
+            url: window.location.href,
+            content: cleanContent(processedContent || content), // 使用处理后的内容
+            metadata: {
+                author,
+                platform: '微博',
+                publishTime,
+                topics,
+                images,
+                externalLinks, // 添加外部链接数据
+                interactions: {
+                    likes,
+                    reposts,
+                    comments
+                },
+                paragraphCount: content.split('\n\n').length,
+                timestamp: new Date().toISOString()
+            }
+        };
+        
+        // 如果有转发内容，添加到元数据中
+        if (retweetData) {
+            result.metadata.retweet = retweetData;
+        }
+        
+        return result;
+
+    } catch (error) {
+        console.error('提取微博内容时出错:', error);
+        throw new Error('提取微博内容失败: ' + error.message);
+    }
+}
+
+// 添加知识星球内容提取函数
+async function extractZsxqContent() {
+    try {
+        console.log('检测到知识星球页面，使用专用提取方法');
+
+        // 等待内容加载
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 首先定位到主要内容面板
+        const topicDetailPanel = document.querySelector('.topic-detail-panel');
+        
+        if (!topicDetailPanel) {
+            throw new Error('未找到知识星球内容面板，请确保您在帖子详情页面');
+        }
+        
+        console.log('成功找到知识星球内容面板');
+
+        // 获取星球名称 - 仅从内容面板中查找
+        const groupName = topicDetailPanel.querySelector('.enter-group .left')?.textContent?.trim().replace('来自：', '') || '未知星球';
+
+        // 获取作者信息 - 仅从内容面板中查找
+        const author = topicDetailPanel.querySelector('.role.member')?.textContent?.trim() || 
+                      topicDetailPanel.querySelector('.author .info div:first-child')?.textContent?.trim() || 
+                      '未知作者';
+
+        // 获取发布时间 - 仅从内容面板中查找
+        const publishTime = topicDetailPanel.querySelector('.author .date')?.textContent?.trim() || '';
+
+        // 获取正文内容 - 仅从内容面板中查找
+        const contentDiv = topicDetailPanel.querySelector('.talk-content-container .content');
+        
+        // 处理内容，包括提取超链接
+        let title = '';
+        let content = '';
+        let processedContent = '';
+        
+        if (contentDiv) {
+            // 尝试获取标题（通常是第一个strong元素或第一行文本）
+            const titleElement = contentDiv.querySelector('strong');
+            if (titleElement) {
+                title = titleElement.textContent.trim();
+            } else {
+                // 如果没有strong标签，使用第一行文本作为标题
+                const firstLine = contentDiv.textContent.trim().split('\n')[0];
+                title = firstLine || '知识星球内容';
+            }
+            
+            // 获取原始文本内容
+            content = contentDiv.textContent.trim();
+            
+            // 创建一个副本用于处理
+            const contentClone = contentDiv.cloneNode(true);
+            
+            // 处理所有超链接，将链接URL添加到文本中
+            const links = contentClone.querySelectorAll('a');
+            links.forEach(link => {
+                // 检查是否是有效链接
+                if (link.href && link.href.startsWith('http')) {
+                    // 如果链接文本不包含完整URL，则添加URL
+                    if (!link.textContent.includes(link.href)) {
+                        // 创建一个新的文本节点，包含链接URL
+                        const linkText = document.createTextNode(` [${link.href}] `);
+                        
+                        // 在链接元素后插入链接URL
+                        if (link.nextSibling) {
+                            link.parentNode.insertBefore(linkText, link.nextSibling);
+                        } else {
+                            link.parentNode.appendChild(linkText);
+                        }
+                    }
+                }
+            });
+            
+            // 获取处理后的文本内容
+            processedContent = contentClone.textContent.trim();
+        } else {
+            console.warn('未找到内容元素');
+        }
+
+        // 获取标签 - 仅从内容面板中查找
+        const tags = Array.from(topicDetailPanel.querySelectorAll('.tag-container .tag'))
+            .map(tag => tag.textContent.trim())
+            .filter(Boolean);
+
+        // 获取点赞数 - 仅从内容面板中查找
+        const likeText = topicDetailPanel.querySelector('.like-text')?.textContent || '';
+        const likeCount = likeText.match(/\d+/) ? likeText.match(/\d+/)[0] : '0';
+
+        // 获取评论 - 仅从内容面板中查找
+        const comments = [];
+        const commentItems = topicDetailPanel.querySelectorAll('.comment-container .comment-item');
+        commentItems.forEach(item => {
+            const commentAuthor = item.querySelector('.comment')?.textContent || '';
+            const commentText = item.querySelector('.text:last-child')?.textContent || '';
+            const commentTime = item.querySelector('.time')?.textContent || '';
+            
+            if (commentText && commentAuthor) {
+                comments.push({
+                    author: commentAuthor,
+                    text: commentText,
+                    time: commentTime
+                });
+            }
+        });
+
+        // 获取图片 - 仅从内容面板中查找
+        const images = [];
+        const imgElements = topicDetailPanel.querySelectorAll('.talk-content-container img');
+        imgElements.forEach(img => {
+            if (img.src && !img.src.includes('data:image') && !img.src.includes('avatar')) {
+                images.push({
+                    url: img.src,
+                    width: img.naturalWidth || 0,
+                    height: img.naturalHeight || 0,
+                    alt: img.alt || ''
+                });
+            }
+        });
+        
+        // 获取所有外部链接 - 仅从内容面板中查找
+        const externalLinks = [];
+        const linkElements = contentDiv?.querySelectorAll('a[target="_blank"]') || [];
+        linkElements.forEach(link => {
+            if (link.href && link.href.startsWith('http')) {
+                externalLinks.push({
+                    text: link.textContent.trim(),
+                    url: link.href
+                });
+            }
+        });
+
+        // 构造返回数据
+        const extractedData = {
+            title: title || '知识星球内容',
+            url: window.location.href,
+            content: cleanContent(processedContent || content), // 使用处理后的内容
+            metadata: {
+                author: cleanContent(author),
+                publishTime: cleanContent(publishTime),
+                platform: '知识星球',
+                groupName: groupName,
+                tags: tags,
+                source: 'zsxq.com',
+                paragraphCount: content.split('\n\n').length,
+                images: images,
+                externalLinks: externalLinks, // 添加外部链接数据
+                comments: comments,
+                likes: likeCount,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        console.log('提取的知识星球内容:', extractedData);
+        return extractedData;
+
+    } catch (error) {
+        console.error('提取知识星球内容时出错:', error);
+        throw new Error('提取知识星球内容失败: ' + error.message);
+    }
 }
